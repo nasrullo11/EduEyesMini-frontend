@@ -1,9 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import axios from "axios"
-import {fetchFaceDetection, logout, API_URL, checkAuth} from "/lib/api"
+import { fetchFaceDetection, logout, checkAuth, sendStudentActivity } from "/lib/api"
 import Sidebar from "@/components/Sidebar"
 import Header from "@/components/Header"
 import ImageViewer from "@/components/ImageViewer"
@@ -21,8 +20,11 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState("")
 
-    const [selectedStudent, setSelectedStudent] = useState("")
+    const [studentIds, setStudentIds] = useState([])
+    const [currentIndex, setCurrentIndex] = useState(0)
     const [selectedLabel, setSelectedLabel] = useState("")
+    const [actionsQueue, setActionsQueue] = useState([])
+
     const labelOptions = [
         "Qo'l ko'tarmoqda",
         "O'qimoqda",
@@ -63,26 +65,107 @@ export default function Dashboard() {
         verify()
     }, [router])
 
+    const loadDetection = useCallback(async () => {
+        try {
+            setLoading(true)
+            setError("")
+            const det = await fetchFaceDetection()
+            if (det) {
+                setDetection(det)
+                setSchoolName(det.school_name || "")
+                setClassName(det.class_name || "")
+
+                const ids = Array.from(
+                    new Set((det.faces || []).map((f) => f.student_id).filter(Boolean))
+                ).sort((a, b) => parseInt(a) - parseInt(b))
+
+                setStudentIds(ids)
+                setCurrentIndex(0)
+                setSelectedLabel("")
+                setActionsQueue([])
+            }
+        } catch (e) {
+            console.error(e)
+            setError("Ma'lumotni olishda xatolik")
+        } finally {
+            setLoading(false)
+        }
+    }, [])
+
     useEffect(() => {
-        if (!isAuthChecked) return
-            ;(async () => {
+        if (isAuthChecked) {
+            loadDetection()
+        }
+    }, [isAuthChecked, loadDetection])
+
+    const handleAction = async () => {
+        const currentId = studentIds[currentIndex]
+        if (!currentId || !selectedLabel) {
+            alert("Iltimos, holatni tanlang ❗")
+            return
+        }
+
+        const action = {
+            id: labelOptions.indexOf(selectedLabel),
+            label: labelMap[selectedLabel],
+        }
+
+        setActionsQueue((prev) => [
+            ...prev,
+            {
+                student_id: parseInt(currentId, 10),
+                detection,
+                action,
+            },
+        ])
+
+        if (currentIndex < studentIds.length - 1) {
+            setCurrentIndex(currentIndex + 1)
+            setSelectedLabel("")
+        } else {
             try {
-                setLoading(true)
-                setError("")
-                const det = await fetchFaceDetection()
-                if (det) {
-                    setDetection(det)
-                    setSchoolName(det.school_name || "")
-                    setClassName(det.class_name || "")
+                for (const item of actionsQueue.concat({
+                    student_id: parseInt(currentId, 10),
+                    detection,
+                    action,
+                })) {
+                    const face = item.detection.faces.find(
+                        (f) => f.student_id === item.student_id
+                    )
+                    const payload = {
+                        event_type: "student_activity",
+                        timestamp: Math.floor(
+                            new Date(item.detection?.timestamp).getTime() / 1000
+                        ),
+                        track_id: 101,
+                        face_confidence: null,
+                        student_id: item.student_id,
+                        camera_id: 1,
+                        frame_id: item.detection?.frame_id || 5,
+                        action: item.action,
+                        extra_info: {
+                            bbox: face
+                                ? {
+                                    x: face.bbox[0],
+                                    y: face.bbox[1],
+                                    width: face.bbox[2] - face.bbox[0],
+                                    height: face.bbox[3] - face.bbox[1],
+                                }
+                                : null,
+                            detector: "yolov8",
+                            model_version: "v1.3.0",
+                        },
+                    }
+                    await sendStudentActivity(payload)
                 }
+                alert("Barcha ma'lumotlar yuborildi ✅")
+                await loadDetection()
             } catch (e) {
                 console.error(e)
-                setError("Ma'lumotni olishda xatolik")
-            } finally {
-                setLoading(false)
+                alert("Yuborishda xatolik ❌")
             }
-        })()
-    }, [isAuthChecked])
+        }
+    }
 
     const logoImg = "/logo.png"
 
@@ -152,18 +235,21 @@ export default function Dashboard() {
 
                             <div className="bg-white rounded-lg shadow-sm p-2">
                                 <div className="w-full h-[600px] bg-gray-200 rounded-lg flex items-center justify-center">
-                                    <ImageViewer detection={detection} error={error} loading={loading} />
+                                    <ImageViewer
+                                        detection={detection}
+                                        error={error}
+                                        loading={loading}
+                                    />
                                 </div>
                             </div>
 
                             <StudentActionForm
-                                detection={detection}
-                                selectedStudent={selectedStudent}
-                                setSelectedStudent={setSelectedStudent}
+                                currentId={studentIds[currentIndex]}
                                 selectedLabel={selectedLabel}
                                 setSelectedLabel={setSelectedLabel}
                                 labelOptions={labelOptions}
-                                labelMap={labelMap}
+                                onSend={handleAction}
+                                isLast={currentIndex === studentIds.length - 1}
                             />
                         </div>
                     )}
