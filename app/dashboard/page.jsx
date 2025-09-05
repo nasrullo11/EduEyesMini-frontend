@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import {useEffect, useState, useCallback, useRef} from "react"
 import { useRouter } from "next/navigation"
 import { fetchFaceDetection, logout, checkAuth, sendStudentActivity } from "/lib/api"
 import Sidebar from "@/components/Sidebar"
@@ -24,6 +24,7 @@ export default function Dashboard() {
     const [currentIndex, setCurrentIndex] = useState(0)
     const [selectedLabel, setSelectedLabel] = useState("")
     const [actionsQueue, setActionsQueue] = useState([])
+    const [face_detection_id, setFaceDetectionId] = useState(0)
 
     const labelOptions = [
         "Qo'l ko'tarmoqda",
@@ -65,32 +66,81 @@ export default function Dashboard() {
         verify()
     }, [router])
 
+    const pollingRef = useRef(null)
+
     const loadDetection = useCallback(async () => {
         try {
             setLoading(true)
             setError("")
             const det = await fetchFaceDetection()
             if (det) {
-                setDetection(det)
-                setSchoolName(det.school_name || "")
-                setClassName(det.class_name || "")
-
-                const ids = Array.from(
-                    new Set((det.faces || []).map((f) => f.student_id).filter(Boolean))
-                ).sort((a, b) => parseInt(a) - parseInt(b))
-
-                setStudentIds(ids)
-                setCurrentIndex(0)
-                setSelectedLabel("")
-                setActionsQueue([])
+                updateDetection(det)
             }
         } catch (e) {
             console.error(e)
-            setError("Ma'lumotni olishda xatolik")
+            if (e.status === 404) {
+                setError("Hozircha boshqa ma'lumot mavjud emas!")
+                setCurrentIndex(0)
+                setSelectedLabel("")
+                startPolling()
+            } else {
+                setError("Ma'lumotni olishda xatolik")
+                setDetection(null)
+            }
         } finally {
             setLoading(false)
         }
     }, [])
+
+    const startPolling = () => {
+        if (pollingRef.current) return
+
+        pollingRef.current = setInterval(async () => {
+            try {
+                const det = await fetchFaceDetection()
+                if (det) {
+                    clearInterval(pollingRef.current)
+                    pollingRef.current = null
+                    updateDetection(det)
+                }
+            } catch (e) {
+                if (e.status !== 404) {
+                    console.error("Polling error:", e)
+                    setError("Ma'lumotni olishda xatolik")
+                    setDetection(null)
+                } else {
+                }
+            }
+        }, 10000)
+    }
+
+    const updateDetection = (det) => {
+        setDetection(det)
+        setFaceDetectionId(det.id)
+        setSchoolName(det.school_name || "")
+        setClassName(det.class_name || "")
+
+        const ids = Array.from(
+            new Set((det.faces || []).map(f => f.student_id).filter(Boolean))
+        ).sort((a, b) => parseInt(a) - parseInt(b))
+
+        setStudentIds(ids)
+        setCurrentIndex(0)
+        setSelectedLabel("")
+        setActionsQueue([])
+        setError("")
+    }
+
+
+    useEffect(() => {
+        loadDetection()
+
+        return () => {
+            if (pollingRef.current) {
+                clearInterval(pollingRef.current)
+            }
+        }
+    }, [loadDetection])
 
     useEffect(() => {
         if (isAuthChecked) {
@@ -158,7 +208,7 @@ export default function Dashboard() {
                     }
                     request.push(payload)
                 }
-                await sendStudentActivity(request)
+                await sendStudentActivity(request, face_detection_id)
 
                 localStorage.removeItem("studentActions")
                 setActionsQueue([])
