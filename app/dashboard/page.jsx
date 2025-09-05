@@ -110,25 +110,25 @@ export default function Dashboard() {
             label: labelMap[selectedLabel],
         }
 
-        setActionsQueue((prev) => [
-            ...prev,
-            {
-                student_id: parseInt(currentId, 10),
-                detection,
-                action,
-            },
-        ])
+        const newAction = {
+            student_id: parseInt(currentId, 10),
+            detection,
+            action,
+        }
+
+        setActionsQueue((prev) => [...prev, newAction])
+
+        const stored = JSON.parse(localStorage.getItem("studentActions") || "[]")
+        localStorage.setItem("studentActions", JSON.stringify([...stored, newAction]))
 
         if (currentIndex < studentIds.length - 1) {
             setCurrentIndex(currentIndex + 1)
             setSelectedLabel("")
         } else {
             try {
-                for (const item of actionsQueue.concat({
-                    student_id: parseInt(currentId, 10),
-                    detection,
-                    action,
-                })) {
+                const actionsToSend = JSON.parse(localStorage.getItem("studentActions") || "[]")
+                let request = []
+                for (const item of actionsToSend) {
                     const face = item.detection.faces.find(
                         (f) => f.student_id === item.student_id
                     )
@@ -156,8 +156,12 @@ export default function Dashboard() {
                             model_version: "v1.3.0",
                         },
                     }
-                    await sendStudentActivity(payload)
+                    request.push(payload)
                 }
+                await sendStudentActivity(request)
+
+                localStorage.removeItem("studentActions")
+                setActionsQueue([])
                 alert("Barcha ma'lumotlar yuborildi ✅")
                 await loadDetection()
             } catch (e) {
