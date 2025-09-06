@@ -6,7 +6,7 @@ import { fetchFaceDetection, logout, checkAuth, sendStudentActivity } from "/lib
 import Sidebar from "@/components/Sidebar"
 import Header from "@/components/Header"
 import ImageViewer from "@/components/ImageViewer"
-import StudentActionForm from "@/components/StudentActionForm"
+import StudentActionForm from "/components/StudentActionForm"
 
 export default function Dashboard() {
     const router = useRouter()
@@ -80,8 +80,8 @@ export default function Dashboard() {
             console.error(e)
             if (e.status === 404) {
                 setError("Hozircha boshqa ma'lumot mavjud emas!")
-                setCurrentIndex(0)
                 setSelectedLabel("")
+                setStudentIds([])
                 startPolling()
             } else {
                 setError("Ma'lumotni olishda xatolik")
